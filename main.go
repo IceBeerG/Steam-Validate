@@ -37,7 +37,7 @@ func main() {
 	}
 	var login bool = false
 
-	if !checkIfProcessRunning("steamservice.exe") && findString(vdfSteamUser, "1", "AllowAutoLogin") {
+	if !checkIfProcessRunning("steam.exe") && findString(vdfSteamUser, "1", "AllowAutoLogin") {
 		fmt.Println("Запуск стима")
 		runCommand("cmd", "/C", "start", "steam://run")
 		time.Sleep(30 * time.Second)

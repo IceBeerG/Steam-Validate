@@ -66,10 +66,6 @@ func main() {
 	} else if !findString(vdfSteamUser, "1", "AllowAutoLogin") {
 		for {
 			if !checkIfProcessRunning("steamservice.exe") {
-				err := os.Remove(steamConn)
-				if err != nil {
-					fmt.Printf("Ошибка удаления файла %s. %s", steamConn, err)
-				}
 				fmt.Println("Запуск стима. Авторизируйтесь в стиме")
 				runCommand("cmd", "/C", "start", "steam://run")
 				time.Sleep(10 * time.Second)
@@ -221,6 +217,7 @@ func fileModify(filename string) (modify bool) {
 		fileinfo2, err := os.Stat(filename)
 		if err != nil {
 			fmt.Println("[ERROR] Ошибка получения инфо о файле", err)
+			break
 		}
 		if prevModify != fileinfo2.ModTime() {
 			modify = true
@@ -232,6 +229,7 @@ func fileModify(filename string) (modify bool) {
 
 func checkGames(id, game, file_manifest, logSteam, steamStatLog string) {
 	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule (result No Error", id)
+	searchStrign6 := fmt.Sprintf("%s scheduler finished : removed from schedule (result Suspended", id)
 	searchStrign2 := fmt.Sprintf("%s is marked \"NoUpdatesAfterInstall\" - skipping validation", id)
 	searchStrign3 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result No connection`, id)
 	searchStrign4 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result Disk write failure`, id)
@@ -260,10 +258,11 @@ func checkGames(id, game, file_manifest, logSteam, steamStatLog string) {
 	}
 
 	for {
+		fmt.Println("циклы проверки") // проверка
 		if fileModify(logSteam) {
-			if (checkLastString(logSteam, searchStrign1) || checkLastString(logSteam, searchStrign2)) && !checkLastString(steamStatLog, searchStrign5) {
+			fmt.Println("файл изменен" + logSteam) // проверка searchStrign6
+			if (checkLastString(logSteam, searchStrign1) || checkLastString(logSteam, searchStrign2) || checkLastString(logSteam, searchStrign6)) && !checkLastString(steamStatLog, searchStrign5) {
 				time.Sleep(1 * time.Second)
-				// fmt.Printf("Проверка %s завершена\n", game)
 				date := time.Now().Format("02.01.2006 15:04:05")
 				checkedString := fmt.Sprintf("[%s] %s - Проверка %s завершена\n", date, id, game)
 				fmt.Println(checkedString)
@@ -357,6 +356,8 @@ func checkLastString(filePath, searchString string) (checked bool) {
 	}
 	defer file.Close()
 
+	fmt.Println("получаем последние строки") // проверка
+
 	var lastLines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -370,9 +371,12 @@ func checkLastString(filePath, searchString string) (checked bool) {
 		log.Fatalf("Ошибка при сканировании файла: %s", err)
 	}
 
+	fmt.Println("Ищем совпадения в последних строках") // проверка
+
 	for _, line := range lastLines {
 		if strings.Contains(line, searchString) {
 			checked = true
+			break
 		}
 	}
 	return

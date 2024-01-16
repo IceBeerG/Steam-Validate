@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// var logSteam string
+var allertCheck bool = false
 
 func main() {
 	checkLog := "check.log"
@@ -25,12 +25,21 @@ func main() {
 			fmt.Println(err)
 		}
 	}
+	checkLogAllert := "checkAllert.log"
+	_, err = os.Stat(checkLogAllert)
+	if os.IsNotExist(err) {
+		_, err := os.Create(checkLogAllert)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
 	var gameName, gameID string
 	steamPath := regGet(`SOFTWARE\WOW6432Node\Valve\Steam`, "InstallPath") // получаем папку стима
 	logSteam := steamPath + `\logs\content_log.txt`                        // лог для проверки окончания проверки игры
 	steamConn := steamPath + `\logs\connection_log.txt`                    // лог подключения стима
 	vdfSteam := steamPath + `\steamapps\libraryfolders.vdf`                // файл со списком библиотек стима
 	vdfSteamUser := steamPath + `\config\loginusers.vdf`                   // файл с логином, проверка что стим авторизирован
+	steamStatLog := steamPath + `\logs\stats_log.txt`
 	steamLibrary, err := parseSteamLibrary(vdfSteam)
 	if err != nil {
 		fmt.Println(err)
@@ -71,11 +80,13 @@ func main() {
 	}
 
 	time.Sleep(5 * time.Second)
+
 	for _, path := range steamLibrary {
 		manifest, err := filepath.Glob(path + `\appmanifest_*.acf`)
 		if err != nil {
 			fmt.Println(err)
 		}
+		fmt.Println("Библиотека - ", path)
 		for _, file_manifest := range manifest {
 			fmt.Println()
 
@@ -87,20 +98,23 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			}
-			gameDir := path + "\\" + gameName
 
-			date := time.Now().Format("2006-01-02")
-			dateM := date[:len(date)-3]
-			checked := findString("check.log", dateM, gameID)
+			date := time.Now().Format("02.01.2006")
+			dateM := date[3:]
+			checked := findString("check.log", dateM, gameID+" - Проверка ")
 
 			if !checked {
-				checkGames(gameID, gameDir, file_manifest, logSteam)
+				checkGames(gameID, gameName, file_manifest, logSteam, steamStatLog)
 			} else {
 				fmt.Println(gameName + " - Игра проверена ранее")
 			}
 		}
 	}
-	fmt.Println("\nПроверка игр завершена")
+	if allertCheck {
+		fmt.Println("\nПроверка игр завершена c ошибками, подробнее в", checkLogAllert)
+	} else {
+		fmt.Println("\nПроверка игр завершена")
+	}
 	g := ""
 	fmt.Scan(&g)
 }
@@ -197,31 +211,71 @@ func fileModify(filename string) (modify bool) {
 	return
 }
 
-func checkGames(id, game, file_manifest, logSteam string) {
-	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule", id)
-	searchStrign2 := fmt.Sprintf("%s is marked \"NoUpdatesAfterInstall\"", id)
+func checkGames(id, game, file_manifest, logSteam, steamStatLog string) {
+	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule (result No Error", id)
+	searchStrign2 := fmt.Sprintf("%s is marked \"NoUpdatesAfterInstall\" - skipping validation", id)
+	searchStrign3 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result No connection`, id)
+	searchStrign4 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result Disk write failure`, id)
+	searchStrign5 := fmt.Sprintf(`%s] Loading stats from disk...failed to initialize KV from file!`, id)
 
 	validate := "steam://validate/" + id
 	runCommand("cmd", "/C", "start", validate)
 	fmt.Println("Запуск проверки игры ", game)
 
+	checklog, err := os.OpenFile("check.log", os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer checklog.Close()
+
+	checkLogAllert, err := os.OpenFile("checkAllert.log", os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer checkLogAllert.Close()
+
+	date := time.Now().Format("02.01.2006 15:04:05")
+	checkedString := fmt.Sprintf("[%s] %s - Запуск проверки %s\n", date, id, game)
+	if _, err := checklog.WriteString(checkedString); err != nil {
+		fmt.Println(err)
+	}
+
 	for {
 		if fileModify(logSteam) {
-			if checkLastString(logSteam, searchStrign1) || checkLastString(logSteam, searchStrign2) {
+			if (checkLastString(logSteam, searchStrign1) || checkLastString(logSteam, searchStrign2)) && !checkLastString(steamStatLog, searchStrign5) {
 				time.Sleep(1 * time.Second)
-
-				fmt.Printf("Проверка %s завершена\n", game)
-
-				checklog, err := os.OpenFile("check.log", os.O_APPEND|os.O_WRONLY, 0600)
-				if err != nil {
+				// fmt.Printf("Проверка %s завершена\n", game)
+				date := time.Now().Format("02.01.2006 15:04:05")
+				checkedString := fmt.Sprintf("[%s] %s - Проверка %s завершена\n", date, id, game)
+				fmt.Println(checkedString)
+				if _, err = checklog.WriteString(checkedString); err != nil {
 					fmt.Println(err)
 					break
 				}
-				defer checklog.Close()
-
-				date := time.Now().Format("2006-01-02")
-				checkedString := fmt.Sprintf("[%s] %s - Проверка завершена. %s\n", date, id, game)
-				if _, err = checklog.WriteString(checkedString); err != nil {
+				break
+			} else if checkLastString(logSteam, searchStrign3) {
+				checkedString := fmt.Sprintf("[%s] %s - Отмена проверки %s. Нет связи.\n", date, id, game)
+				fmt.Println(checkedString)
+				allertCheck = true
+				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+					fmt.Println(err)
+					break
+				}
+				break
+			} else if checkLastString(logSteam, searchStrign4) {
+				checkedString := fmt.Sprintf("[%s] %s - Повторите проверку %s. Ошибка записи.\n", date, id, game)
+				fmt.Println(checkedString)
+				allertCheck = true
+				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+					fmt.Println(err)
+					break
+				}
+				break
+			} else if checkLastString(steamStatLog, searchStrign5) {
+				checkedString := fmt.Sprintf("[%s] %s - Игра %s установлена с другого аккаунта. Смените УЗ для проверки.\n", date, id, game)
+				fmt.Println(checkedString)
+				allertCheck = true
+				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
 					fmt.Println(err)
 					break
 				}

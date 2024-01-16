@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,9 +15,16 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-var allertCheck bool = false
+var (
+	allertCheck         bool = false
+	changeStatusStation bool = false // спрятать станцию в начале проверки и показать по окончании проверки
+)
 
 func main() {
+	if changeStatusStation {
+		viewStation("false")
+	}
+
 	checkLog := "check.log"
 	_, err := os.Stat(checkLog)
 	if os.IsNotExist(err) {
@@ -115,6 +123,11 @@ func main() {
 	} else {
 		fmt.Println("\nПроверка игр завершена")
 	}
+
+	if changeStatusStation {
+		viewStation("true")
+	}
+
 	g := ""
 	fmt.Scan(&g)
 }
@@ -357,4 +370,42 @@ func checkLastString(filePath, searchString string) (checked bool) {
 		}
 	}
 	return
+}
+
+// скрыть\отобразить станцию
+func viewStation(seeSt string) error {
+	regFolder := `SOFTWARE\ITKey\Esme`
+	serverID := regGet(regFolder, "last_server") // получаем ID сервера
+	regFolder += `\servers\` + serverID
+	authToken := regGet(regFolder, "auth_token") // получаем токен для авторизации
+
+	resp, err := http.Get("https://services.drova.io")
+	if err != nil {
+		fmt.Println("Сайт недоступен")
+	} else {
+		if resp.StatusCode == http.StatusOK {
+			url := "https://services.drova.io/server-manager/servers/" + serverID + "/set_published/" + seeSt
+
+			request, err := http.NewRequest("POST", url, nil)
+			if err != nil {
+				fmt.Println("Ошибка при создании запроса:", err)
+				return err
+			}
+
+			request.Header.Set("X-Auth-Token", authToken) // Установка заголовка X-Auth-Token
+			client := &http.Client{}
+			response, err := client.Do(request)
+			if err != nil {
+				fmt.Println("Ошибка при отправке запроса:", err)
+				return err
+			}
+			defer response.Body.Close()
+			if seeSt == "true" {
+				fmt.Printf("Станция видна\n")
+			} else {
+				fmt.Printf("Станция скрыта\n")
+			}
+		}
+	}
+	return err
 }

@@ -17,10 +17,15 @@ import (
 
 var (
 	allertCheck         bool = false
-	changeStatusStation bool = false // спрятать станцию в начале проверки и показать по окончании проверки
+	changeStatusStation bool = true // спрятать станцию в начале проверки и показать по окончании проверки
 )
 
 func main() {
+	if !checkIfProcessRunning("esme.exe") {
+		changeStatusStation = false
+		fmt.Println("Запущено не на станции, либо esme.exe не запущен и станция не видна")
+	}
+
 	if changeStatusStation {
 		viewStation(false)
 	}
@@ -116,6 +121,7 @@ func main() {
 			} else {
 				fmt.Println(gameName + " - Игра проверена ранее")
 			}
+			time.Sleep(5 * time.Second)
 		}
 	}
 	if allertCheck {
@@ -355,7 +361,7 @@ func checkLastString(filePath, searchString string) (checked bool) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		lastLines = append(lastLines, scanner.Text())
-		if len(lastLines) > 10 {
+		if len(lastLines) > 50 {
 			lastLines = lastLines[1:]
 		}
 	}

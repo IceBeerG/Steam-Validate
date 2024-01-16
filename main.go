@@ -22,7 +22,7 @@ var (
 
 func main() {
 	if changeStatusStation {
-		viewStation("false")
+		viewStation(false)
 	}
 
 	checkLog := "check.log"
@@ -125,7 +125,7 @@ func main() {
 	}
 
 	if changeStatusStation {
-		viewStation("true")
+		viewStation(true)
 	}
 
 	g := ""
@@ -373,7 +373,7 @@ func checkLastString(filePath, searchString string) (checked bool) {
 }
 
 // скрыть\отобразить станцию
-func viewStation(seeSt string) error {
+func viewStation(seeSt bool) error {
 	regFolder := `SOFTWARE\ITKey\Esme`
 	serverID := regGet(regFolder, "last_server") // получаем ID сервера
 	regFolder += `\servers\` + serverID
@@ -384,7 +384,14 @@ func viewStation(seeSt string) error {
 		fmt.Println("Сайт недоступен")
 	} else {
 		if resp.StatusCode == http.StatusOK {
-			url := "https://services.drova.io/server-manager/servers/" + serverID + "/set_published/" + seeSt
+			var visible string
+			if seeSt {
+				visible = "true"
+			} else {
+				visible = "false"
+			}
+
+			url := "https://services.drova.io/server-manager/servers/" + serverID + "/set_published/" + visible
 
 			request, err := http.NewRequest("POST", url, nil)
 			if err != nil {
@@ -400,7 +407,7 @@ func viewStation(seeSt string) error {
 				return err
 			}
 			defer response.Body.Close()
-			if seeSt == "true" {
+			if seeSt {
 				fmt.Printf("Станция видна\n")
 			} else {
 				fmt.Printf("Станция скрыта\n")

@@ -49,6 +49,7 @@ func main() {
 	var gameName, gameID string
 	steamPath := regGet(`SOFTWARE\WOW6432Node\Valve\Steam`, "InstallPath") // получаем папку стима
 	logSteam := steamPath + `\logs\content_log.txt`                        // лог для проверки окончания проверки игры
+	logSteamOld := steamPath + `\logs\content_log.previous.txt`            // лог для проверки окончания проверки игры
 	steamConn := steamPath + `\logs\connection_log.txt`                    // лог подключения стима
 	vdfSteam := steamPath + `\steamapps\libraryfolders.vdf`                // файл со списком библиотек стима
 	vdfSteamUser := steamPath + `\config\loginusers.vdf`                   // файл с логином, проверка что стим авторизирован
@@ -65,16 +66,19 @@ func main() {
 		time.Sleep(30 * time.Second)
 	} else if !findString(vdfSteamUser, "1", "AllowAutoLogin") {
 		for {
+			loginCheck, stringLogin := checkLastString(steamConn, "] Logging on [")
 			if !checkIfProcessRunning("steamservice.exe") {
 				fmt.Println("Запуск стима. Авторизируйтесь в стиме")
 				runCommand("cmd", "/C", "start", "steam://run")
 				time.Sleep(10 * time.Second)
-			} else if !checkLastString(steamConn, "] Logging on [") || !login {
+			} else if !loginCheck || !login {
 				fmt.Println("Ждем авторизации в стиме")
 				for {
 					fmt.Print("*")
-					if fileModify(steamConn) {
-						if checkLastString(steamConn, "] Logging on [") {
+					changeStat, _ := fileModify(steamConn)
+					if changeStat {
+						if loginCheck {
+							fmt.Println(stringLogin)
 							fmt.Println("\nСтим авторизован, проверка скоро начнется")
 							fmt.Println("Если проверка не запустится, перезапустите приложение")
 							login = true
@@ -113,7 +117,7 @@ func main() {
 			checked := findString("check.log", dateM, gameID+" - Проверка ")
 
 			if !checked {
-				checkGames(gameID, gameName, file_manifest, logSteam, steamStatLog)
+				checkGames(gameID, gameName, file_manifest, logSteam, logSteamOld, steamStatLog)
 			} else {
 				fmt.Println(gameName + " - Игра проверена ранее")
 			}
@@ -206,12 +210,13 @@ func getInfo(fileName, trimString string) (string, error) {
 	return data, err
 }
 
-func fileModify(filename string) (modify bool) {
+func fileModify(filename string) (modify, fileChange bool) {
 	fileinfo, err := os.Stat(filename)
 	if err != nil {
 		fmt.Println("[ERROR] Ошибка получения инфо о файле", err)
 	}
 	prevModify := fileinfo.ModTime()
+	prevSize := fileinfo.Size()
 	for {
 		time.Sleep(500 * time.Millisecond)
 		fileinfo2, err := os.Stat(filename)
@@ -221,19 +226,22 @@ func fileModify(filename string) (modify bool) {
 		}
 		if prevModify != fileinfo2.ModTime() {
 			modify = true
+			if prevSize > fileinfo2.Size() {
+				fileChange = true
+			}
 			break
 		}
 	}
 	return
 }
 
-func checkGames(id, game, file_manifest, logSteam, steamStatLog string) {
-	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule (result No Error", id)
-	searchStrign6 := fmt.Sprintf("%s scheduler finished : removed from schedule (result Suspended", id)
+func checkGames(id, game, file_manifest, logSteam, logSteamOld, steamStatLog string) {
+	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule", id)
 	searchStrign2 := fmt.Sprintf("%s is marked \"NoUpdatesAfterInstall\" - skipping validation", id)
-	searchStrign3 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result No connection`, id)
-	searchStrign4 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result Disk write failure`, id)
-	searchStrign5 := fmt.Sprintf(`%s] Loading stats from disk...failed to initialize KV from file!`, id)
+	searchStrign3 := fmt.Sprintf(`%s] Loading stats from disk...failed to initialize KV from file!`, id)
+	// searchStrign5 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result No connection`, id)
+	// searchStrign4 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result Disk write failure`, id)
+	// searchStrign6 := fmt.Sprintf("%s scheduler finished : removed from schedule (result Suspended", id)
 
 	validate := "steam://validate/" + id
 	runCommand("cmd", "/C", "start", validate)
@@ -252,51 +260,95 @@ func checkGames(id, game, file_manifest, logSteam, steamStatLog string) {
 	defer checkLogAllert.Close()
 
 	date := time.Now().Format("02.01.2006 15:04:05")
+	startCheck := time.Now()
 	checkedString := fmt.Sprintf("[%s] %s - Запуск проверки %s\n", date, id, game)
 	if _, err := checklog.WriteString(checkedString); err != nil {
 		fmt.Println(err)
 	}
 
 	for {
-		fmt.Println("циклы проверки") // проверка
-		if fileModify(logSteam) {
-			fmt.Println("файл изменен" + logSteam) // проверка searchStrign6
-			if (checkLastString(logSteam, searchStrign1) || checkLastString(logSteam, searchStrign2) || checkLastString(logSteam, searchStrign6)) && !checkLastString(steamStatLog, searchStrign5) {
-				time.Sleep(1 * time.Second)
-				date := time.Now().Format("02.01.2006 15:04:05")
-				checkedString := fmt.Sprintf("[%s] %s - Проверка %s завершена\n", date, id, game)
-				fmt.Println(checkedString)
-				if _, err = checklog.WriteString(checkedString); err != nil {
-					fmt.Println(err)
+		newFile := false
+		// fmt.Println("циклы проверки") // проверка
+		changeStat, newFile := fileModify(logSteam)
+		if changeStat {
+			var finish3 bool = false
+			var stringFinish3 string = ""
+			finish1, stringFinish1 := checkLastString(logSteam, searchStrign1)
+			if newFile {
+				finish3, stringFinish3 = checkLastString(logSteamOld, searchStrign1)
+			}
+			finish2, _ := checkLastString(logSteam, searchStrign2)
+			otherAccount, _ := checkLastString(steamStatLog, searchStrign3)
+			if (finish1 || finish3) && !otherAccount {
+				check1 := strings.Contains(stringFinish1, "No Error")
+				check2 := strings.Contains(stringFinish3, "No Error")
+				check3 := strings.Contains(stringFinish1, "Suspended")
+				check4 := strings.Contains(stringFinish3, "Suspended")
+
+				if check1 || check2 || check3 || check4 {
+					date := time.Now().Format("02.01.2006 15:04:05")
+					checkedString := fmt.Sprintf("[%s] %s - Проверка %s завершена\n", date, id, game)
+					fmt.Println(checkedString)
+					if _, err = checklog.WriteString(checkedString); err != nil {
+						fmt.Println(err)
+						break
+					}
+					time.Sleep(2 * time.Second)
+					break
+				} else if strings.Contains(stringFinish1, "result No connection") || strings.Contains(stringFinish3, "result No connection") {
+					checkedString := fmt.Sprintf("[%s] %s - Отмена проверки %s. Нет связи.\n", date, id, game)
+					fmt.Println(checkedString)
+					allertCheck = true
+					if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+						fmt.Println(err)
+						break
+					}
+					time.Sleep(2 * time.Second)
+					break
+				} else if strings.Contains(stringFinish1, "result Disk write failure") || strings.Contains(stringFinish3, "result Disk write failure") {
+					checkedString := fmt.Sprintf("[%s] %s - Повторите проверку %s. Ошибка записи.\n", date, id, game)
+					fmt.Println(checkedString)
+					allertCheck = true
+					if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+						fmt.Println(err)
+						break
+					}
+					time.Sleep(2 * time.Second)
 					break
 				}
+			} else if otherAccount && (finish1 || finish3) {
+				stopCheck := time.Now()
+				duration := stopCheck.Sub(startCheck)
+				minutes := int(duration.Seconds())
+				// fmt.Println("startCheck -", startCheck, "stopCheck -", stopCheck, "разница -", minutes)
+				if minutes < 90 {
+					checkedString := fmt.Sprintf("[%s] %s - Игра %s установлена с другого аккаунта. Смените УЗ для проверки.\n", date, id, game)
+					fmt.Println(checkedString)
+					allertCheck = true
+					if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+						fmt.Println(err)
+						break
+					}
+				} else if minutes >= 90 {
+					date := time.Now().Format("02.01.2006 15:04:05")
+					checkedString := fmt.Sprintf("[%s] %s - Проверка %s завершена\n", date, id, game)
+					fmt.Println(checkedString)
+					if _, err = checklog.WriteString(checkedString); err != nil {
+						fmt.Println(err)
+						break
+					}
+				}
+				time.Sleep(2 * time.Second)
 				break
-			} else if checkLastString(logSteam, searchStrign3) {
-				checkedString := fmt.Sprintf("[%s] %s - Отмена проверки %s. Нет связи.\n", date, id, game)
+			} else if finish2 {
+				checkedString := fmt.Sprintf("[%s] %s - проверка выполняется внутри игры %s.\n", date, id, game)
 				fmt.Println(checkedString)
 				allertCheck = true
 				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
 					fmt.Println(err)
 					break
 				}
-				break
-			} else if checkLastString(logSteam, searchStrign4) {
-				checkedString := fmt.Sprintf("[%s] %s - Повторите проверку %s. Ошибка записи.\n", date, id, game)
-				fmt.Println(checkedString)
-				allertCheck = true
-				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
-					fmt.Println(err)
-					break
-				}
-				break
-			} else if checkLastString(steamStatLog, searchStrign5) {
-				checkedString := fmt.Sprintf("[%s] %s - Игра %s установлена с другого аккаунта. Смените УЗ для проверки.\n", date, id, game)
-				fmt.Println(checkedString)
-				allertCheck = true
-				if _, err = checkLogAllert.WriteString(checkedString); err != nil {
-					fmt.Println(err)
-					break
-				}
+				time.Sleep(2 * time.Second)
 				break
 			}
 		}
@@ -316,7 +368,6 @@ func findString(filename, searchString, date string) bool {
 	file, err := os.Open(filename) // "check.log"
 	if err != nil {
 		fmt.Println(err)
-		// break
 	}
 	defer file.Close()
 
@@ -349,14 +400,12 @@ func checkIfProcessRunning(processName string) bool {
 	return strings.Contains(string(output), processName)
 }
 
-func checkLastString(filePath, searchString string) (checked bool) {
+func checkLastString(filePath, searchString string) (checked bool, finishString string) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Fatalf("Ошибка при открытии файла: %s", err)
 	}
 	defer file.Close()
-
-	fmt.Println("получаем последние строки") // проверка
 
 	var lastLines []string
 	scanner := bufio.NewScanner(file)
@@ -371,11 +420,10 @@ func checkLastString(filePath, searchString string) (checked bool) {
 		log.Fatalf("Ошибка при сканировании файла: %s", err)
 	}
 
-	fmt.Println("Ищем совпадения в последних строках") // проверка
-
 	for _, line := range lastLines {
 		if strings.Contains(line, searchString) {
 			checked = true
+			finishString = line
 			break
 		}
 	}

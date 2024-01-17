@@ -17,7 +17,7 @@ import (
 
 var (
 	allertCheck         bool = false
-	changeStatusStation bool = true // спрятать станцию в начале проверки и показать по окончании проверки
+	changeStatusStation bool = false // спрятать станцию в начале проверки и показать по окончании проверки
 )
 
 func main() {

@@ -99,7 +99,7 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		fmt.Println("Библиотека - ", path)
+		fmt.Printf("\n>>>>>>>>>> Библиотека - %s <<<<<<<<<<\n", path)
 		for _, file_manifest := range manifest {
 			fmt.Println()
 
@@ -118,10 +118,12 @@ func main() {
 
 			if !checked {
 				checkGames(gameID, gameName, file_manifest, logSteam, logSteamOld, steamStatLog)
+				time.Sleep(5 * time.Second)
 			} else {
-				fmt.Println(gameName + " - Игра проверена ранее")
+				date := time.Now().Format("02.01.2006 15:04:05")
+				fmt.Printf("[%s] %s - %s проверена ранее\n", date, gameID, gameName)
+				time.Sleep(500 * time.Millisecond)
 			}
-			time.Sleep(5 * time.Second)
 		}
 	}
 	if allertCheck {
@@ -131,7 +133,15 @@ func main() {
 	}
 
 	if changeStatusStation {
-		viewStation(true)
+		for {
+			err := viewStation(true)
+			if err != nil {
+				fmt.Println("Ошибка смены статуса станции")
+			} else {
+				break
+			}
+			time.Sleep(1 * time.Minute)
+		}
 	}
 
 	g := ""
@@ -239,13 +249,10 @@ func checkGames(id, game, file_manifest, logSteam, logSteamOld, steamStatLog str
 	searchStrign1 := fmt.Sprintf("%s scheduler finished : removed from schedule", id)
 	searchStrign2 := fmt.Sprintf("%s is marked \"NoUpdatesAfterInstall\" - skipping validation", id)
 	searchStrign3 := fmt.Sprintf(`%s] Loading stats from disk...failed to initialize KV from file!`, id)
-	// searchStrign5 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result No connection`, id)
-	// searchStrign4 := fmt.Sprintf(`%s scheduler finished : removed from schedule (result Disk write failure`, id)
-	// searchStrign6 := fmt.Sprintf("%s scheduler finished : removed from schedule (result Suspended", id)
 
 	validate := "steam://validate/" + id
 	runCommand("cmd", "/C", "start", validate)
-	fmt.Println("Запуск проверки игры ", game)
+	// fmt.Println("Запуск проверки игры ", game)
 
 	checklog, err := os.OpenFile("check.log", os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -262,28 +269,28 @@ func checkGames(id, game, file_manifest, logSteam, logSteamOld, steamStatLog str
 	date := time.Now().Format("02.01.2006 15:04:05")
 	startCheck := time.Now()
 	checkedString := fmt.Sprintf("[%s] %s - Запуск проверки %s\n", date, id, game)
+	fmt.Println(checkedString)
 	if _, err := checklog.WriteString(checkedString); err != nil {
 		fmt.Println(err)
 	}
-
+	attemptCount := 0
 	for {
 		newFile := false
-		// fmt.Println("циклы проверки") // проверка
 		changeStat, newFile := fileModify(logSteam)
 		if changeStat {
 			var finish3 bool = false
 			var stringFinish3 string = ""
 			finish1, stringFinish1 := checkLastString(logSteam, searchStrign1)
-			if newFile {
+			if newFile { // если content_log пересоздан
 				finish3, stringFinish3 = checkLastString(logSteamOld, searchStrign1)
 			}
 			finish2, _ := checkLastString(logSteam, searchStrign2)
 			otherAccount, _ := checkLastString(steamStatLog, searchStrign3)
 			if (finish1 || finish3) && !otherAccount {
-				check1 := strings.Contains(stringFinish1, "No Error")
-				check2 := strings.Contains(stringFinish3, "No Error")
-				check3 := strings.Contains(stringFinish1, "Suspended")
-				check4 := strings.Contains(stringFinish3, "Suspended")
+				check1 := strings.Contains(stringFinish1, "No Error")  // content_log
+				check2 := strings.Contains(stringFinish3, "No Error")  // content_log.previous
+				check3 := strings.Contains(stringFinish1, "Suspended") // content_log
+				check4 := strings.Contains(stringFinish3, "Suspended") // content_log.previous
 
 				if check1 || check2 || check3 || check4 {
 					date := time.Now().Format("02.01.2006 15:04:05")
@@ -296,15 +303,18 @@ func checkGames(id, game, file_manifest, logSteam, logSteamOld, steamStatLog str
 					time.Sleep(2 * time.Second)
 					break
 				} else if strings.Contains(stringFinish1, "result No connection") || strings.Contains(stringFinish3, "result No connection") {
-					checkedString := fmt.Sprintf("[%s] %s - Отмена проверки %s. Нет связи.\n", date, id, game)
-					fmt.Println(checkedString)
-					allertCheck = true
-					if _, err = checkLogAllert.WriteString(checkedString); err != nil {
-						fmt.Println(err)
+					time.Sleep(120 * time.Second)
+					attemptCount += 1
+					if attemptCount > 5 {
+						checkedString := fmt.Sprintf("[%s] %s - Отмена проверки %s. Нет связи.\n", date, id, game)
+						fmt.Println(checkedString)
+						allertCheck = true
+						if _, err = checkLogAllert.WriteString(checkedString); err != nil {
+							fmt.Println(err)
+							break
+						}
 						break
 					}
-					time.Sleep(2 * time.Second)
-					break
 				} else if strings.Contains(stringFinish1, "result Disk write failure") || strings.Contains(stringFinish3, "result Disk write failure") {
 					checkedString := fmt.Sprintf("[%s] %s - Повторите проверку %s. Ошибка записи.\n", date, id, game)
 					fmt.Println(checkedString)
@@ -320,9 +330,8 @@ func checkGames(id, game, file_manifest, logSteam, logSteamOld, steamStatLog str
 				stopCheck := time.Now()
 				duration := stopCheck.Sub(startCheck)
 				minutes := int(duration.Seconds())
-				// fmt.Println("startCheck -", startCheck, "stopCheck -", stopCheck, "разница -", minutes)
 				if minutes < 90 {
-					checkedString := fmt.Sprintf("[%s] %s - Игра %s установлена с другого аккаунта. Смените УЗ для проверки.\n", date, id, game)
+					checkedString := fmt.Sprintf("[%s] %s - %s установлена с другого аккаунта. Смените УЗ для проверки.\n", date, id, game)
 					fmt.Println(checkedString)
 					allertCheck = true
 					if _, err = checkLogAllert.WriteString(checkedString); err != nil {
@@ -466,9 +475,9 @@ func viewStation(seeSt bool) error {
 			}
 			defer response.Body.Close()
 			if seeSt {
-				fmt.Printf("Станция видна\n")
+				fmt.Printf("Станция доступна для подключения\n")
 			} else {
-				fmt.Printf("Станция скрыта\n")
+				fmt.Printf("Станция не доступна для подключения\n")
 			}
 		}
 	}
